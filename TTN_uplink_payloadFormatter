@@ -1,0 +1,29 @@
+function decodeUplink(input) {
+  var bytes = input.bytes;
+  var data = {};
+
+  // 1. TDS (Bytes 0-1) 
+  data.tds = ((bytes[1] << 8) | bytes[0]);
+
+  // 2. UV (Bytes 2-3) 
+  data.uv = ((bytes[3] << 8) | bytes[2]) / 100.0;
+
+  // 3. Temperature (Bytes 4-5) 
+  var tempRaw = (bytes[5] << 8) | bytes[4];
+  if (tempRaw > 32767) tempRaw -= 65536; 
+  data.temp = tempRaw / 100.0;
+
+  // 4. Pressure (Bytes 6-7) 
+  data.pressure = ((bytes[7] << 8) | bytes[6]) / 10.0;
+
+  // 5. Altitude (Bytes 8-9) -
+  var altRaw = (bytes[9] << 8) | bytes[8];
+  if (altRaw > 32767) altRaw -= 65536;
+  data.altitude = altRaw / 10.0;
+
+  return {
+    data: data,
+    warnings: [],
+    errors: []
+  };
+}

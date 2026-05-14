@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jordan Hydro-Monitor | Smart Agri-Tech AI</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root { 
+      font-family: 'Inter', sans-serif;
+      --bg-light: #f0fdf4; --bg-card: #ffffff; --border-color: #dcfce7;
+      --text-primary: #1e293b; --accent-primary: #16a34a; --accent-blue: #3b82f6; --accent-orange: #f59e0b;
+      --shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+    }
+    body { background: var(--bg-light); color: var(--text-primary); padding-bottom: 50px; }
+    header { background: white; border-bottom: 2px solid var(--border-color); padding: 15px 25px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
+    .logo h1 { color: var(--accent-primary); font-weight: 800; display: flex; align-items: center; gap: 10px; }
+    .status-badge { background: #dcfce7; padding: 8px 16px; border-radius: 40px; color: #15803d; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #10b981; animation: pulse 2s infinite; }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    
+    .wrap { max-width: 1400px; margin: 0 auto; padding: 25px; }
+    .sensor-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-top: 20px; }
+    .sensor-card { background: white; border: 1px solid var(--border-color); border-radius: 20px; padding: 20px; box-shadow: var(--shadow); transition: transform 0.3s; }
+    .sensor-card:hover { transform: translateY(-5px); }
+    .sensor-icon { font-size: 22px; color: var(--accent-primary); margin-bottom: 8px; }
+    .sensor-value { font-size: 28px; font-weight: 900; color: #0f172a; margin-bottom: 3px; }
+    .sensor-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+
+    .chart-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 25px; margin-top: 40px; }
+    .chart-card { background: white; padding: 20px; border-radius: 20px; border: 1px solid var(--border-color); height: 320px; box-shadow: var(--shadow); }
+
+    .ai-section { margin-top: 40px; background: white; border-radius: 30px; padding: 30px; border: 2px solid #86efac; box-shadow: var(--shadow); }
+    .ai-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 20px; }
+    .ai-card { background: #f8fafc; border-radius: 15px; padding: 20px; border-top: 6px solid var(--accent-primary); }
+    .ai-card:nth-child(2) { border-top-color: var(--accent-blue); }
+    .ai-card:nth-child(3) { border-top-color: var(--accent-orange); }
+    .ai-main-value { font-size: 32px; font-weight: 800; color: #1e293b; margin: 10px 0; }
+    #quality-detail { margin-top: 25px; padding: 20px; background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); color: white; border-radius: 15px; font-weight: 700; }
+
+    .control-section { margin-top: 30px; background: #fff; padding: 30px; border-radius: 25px; border: 1px solid #e2e8f0; text-align: center; box-shadow: var(--shadow); }
+    .btn-alarm { background: #ef4444; color: white; border: none; padding: 15px 40px; border-radius: 12px; font-weight: 800; cursor: pointer; transition: 0.3s; font-size: 16px; box-shadow: 0 4px 10px rgba(239, 68, 68, 0.3); }
+    .btn-alarm:hover { background: #dc2626; transform: scale(1.05); }
+
+    footer { text-align: center; margin-top: 50px; color: #64748b; font-weight: 600; padding: 20px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo"><h1><i class="fas fa-seedling"></i> Jordan Hydro-Monitor</h1></div>
+    <div class="status-badge"><span class="status-dot"></span>Agri-Data Active</div>
+  </header>
+
+  <main class="wrap">
+    <h2 style="margin-bottom: 10px;"><i class="fas fa-satellite-dish" style="color:var(--accent-primary)"></i> Live Sensor Readings</h2>
+    <div class="sensor-grid">
+      <div class="sensor-card"><i class="fas fa-temperature-high sensor-icon"></i><div class="sensor-value" id="val-temp">--</div><div class="sensor-label">Temp (°C)</div></div>
+      <div class="sensor-card"><i class="fas fa-flask sensor-icon"></i><div class="sensor-value" id="val-tds">--</div><div class="sensor-label">TDS (PPM)</div></div>
+      <div class="sensor-card"><i class="fas fa-sun sensor-icon"></i><div class="sensor-value" id="val-uv">--</div><div class="sensor-label">UV Index</div></div>
+      <div class="sensor-card"><i class="fas fa-gauge-high sensor-icon"></i><div class="sensor-value" id="val-pressure">--</div><div class="sensor-label">Pressure (hPa)</div></div>
+      <div class="sensor-card"><i class="fas fa-mountain sensor-icon"></i><div class="sensor-value" id="val-altitude">--</div><div class="sensor-label">Altitude (m)</div></div>
+      <div class="sensor-card"><i class="fas fa-signal sensor-icon"></i><div class="sensor-value" id="val-rssi">--</div><div class="sensor-label">RSSI (dBm)</div></div>
+      <div class="sensor-card"><i class="fas fa-wave-square sensor-icon"></i><div class="sensor-value" id="val-snr">--</div><div class="sensor-label">SNR (dB)</div></div>
+      <div class="sensor-card"><i class="fas fa-box sensor-icon"></i><div class="sensor-value" id="packet-count">0</div><div class="sensor-label">Total Packets</div></div>
+    </div>
+
+    <div class="chart-grid">
+      <div class="chart-card"><canvas id="tempChart"></canvas></div>
+      <div class="chart-card"><canvas id="tdsChart"></canvas></div>
+    </div>
+
+    <div class="ai-section">
+      <h2 style="color:#166534; margin-bottom: 20px;"><i class="fas fa-robot"></i> Jordan Agri-AI Analysis</h2>
+      <div class="ai-grid">
+        <div class="ai-card">
+          <div class="sensor-label"><i class="fas fa-leaf"></i> Current Status</div>
+          <div id="current-quality" style="margin-top:15px; font-weight:700; color:var(--accent-primary)">Analyzing...</div>
+          <div id="current-temp-category" style="font-weight:700; color:var(--accent-blue)">Waiting for data...</div>
+        </div>
+        <div class="ai-card">
+          <div class="sensor-label"><i class="fas fa-temperature-high"></i> 15-Min Temp Forecast</div>
+          <div class="ai-main-value" id="ai-temp">--.- °C</div>
+        </div>
+        <div class="ai-card">
+          <div class="sensor-label"><i class="fas fa-flask"></i> 15-Min TDS Forecast</div>
+          <div class="ai-main-value" id="ai-tds">--- ppm</div>
+        </div>
+      </div>
+      <div id="quality-detail">
+        <p id="quality-description">System initializing agricultural standards...</p>
+      </div>
+    </div>
+
+    <div class="control-section">
+        <h2 style="margin-bottom: 25px;"><i class="fas fa-hand-pointer"></i> Manual Remote Control</h2>
+        <button class="btn-alarm" id="btn-alarm-trigger">
+            <i class="fas fa-bell"></i> TRIGGER EMERGENCY ALARM
+        </button>
+        <p id="downlink-status" style="margin-top: 15px; font-size: 13px; font-weight: bold; color: #16a34a; height: 20px;"></p>
+    </div>
+
+  </main>
+
+  <footer>PSUT Graduation Project 2026</footer>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let count = 0;
+    
+    let currentDeviceId = "node1"; 
+    const history = { labels: [], temp: [], tds: [] };
+
+    // UPDATED: Added Temperature Trend (°C) label
+    const ctxTemp = document.getElementById('tempChart');
+    const tempChart = new Chart(ctxTemp, { 
+      type: 'line', 
+      data: { 
+        labels: [], 
+        datasets: [{ 
+          label: 'Temperature Trend (°C)', 
+          data: [], 
+          borderColor: '#3b82f6', 
+          tension: 0.4, 
+          fill: true, 
+          backgroundColor: 'rgba(59, 130, 246, 0.05)' 
+        }] 
+      }, 
+      options: { maintainAspectRatio: false } 
+    });
+    
+    const ctxTds = document.getElementById('tdsChart');
+    const tdsChart = new Chart(ctxTds, { 
+      type: 'line', 
+      data: { 
+        labels: [], 
+        datasets: [{ 
+          label: 'TDS Trend (PPM)', 
+          data: [], 
+          borderColor: '#f59e0b', 
+          tension: 0.4, 
+          fill: true, 
+          backgroundColor: 'rgba(245, 158, 11, 0.05)' 
+        }] 
+      }, 
+      options: { maintainAspectRatio: false } 
+    });
+
+    // Handle Uplink Data
+    socket.on('node1Data', (data) => {
+      count++;
+      if(data.devId) currentDeviceId = data.devId;
+
+      document.getElementById('packet-count').innerText = count;
+      if (data.temp !== undefined) document.getElementById('val-temp').innerText = data.temp;
+      if (data.tds !== undefined) document.getElementById('val-tds').innerText = data.tds;
+      if (data.uv !== undefined) document.getElementById('val-uv').innerText = data.uv;
+      if (data.pressure !== undefined) document.getElementById('val-pressure').innerText = data.pressure;
+      if (data.altitude !== undefined) document.getElementById('val-altitude').innerText = data.altitude;
+      if (data.rssi !== undefined) document.getElementById('val-rssi').innerText = data.rssi;
+      if (data.snr !== undefined) document.getElementById('val-snr').innerText = data.snr;
+
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      history.labels.push(time);
+      history.temp.push(data.temp);
+      history.tds.push(data.tds);
+      if (history.labels.length > 10) { history.labels.shift(); history.temp.shift(); history.tds.shift(); }
+      tempChart.data.labels = history.labels; tempChart.data.datasets[0].data = history.temp; tempChart.update();
+      tdsChart.data.labels = history.labels; tdsChart.data.datasets[0].data = history.tds; tdsChart.update();
+    });
+
+    // Handle AI Predictions
+    socket.on('ml_prediction', (p) => {
+      if (p.temp_prediction) document.getElementById('ai-temp').innerText = p.temp_prediction.toFixed(1) + " °C";
+      if (p.tds_prediction) document.getElementById('ai-tds').innerText = p.tds_prediction.toFixed(0) + " ppm";
+      if (p.current_quality) document.getElementById('current-quality').innerText = p.current_quality;
+      if (p.current_temp_category) document.getElementById('current-temp-category').innerText = p.current_temp_category;
+      if (p.quality_description) document.getElementById('quality-description').innerText = p.quality_description;
+    });
+
+    document.getElementById('btn-alarm-trigger').addEventListener('click', () => {
+        console.log("Button clicked: Sending manual_alarm for", currentDeviceId);
+        socket.emit('manual_alarm', { devId: currentDeviceId });
+        const status = document.getElementById('downlink-status');
+        status.style.color = "#16a34a";
+        status.innerText = "COMMAND FORWARDED TO " + currentDeviceId.toUpperCase();
+        setTimeout(() => { status.innerText = ""; }, 4000);
+    });
+  </script>
+</body>
+</html>

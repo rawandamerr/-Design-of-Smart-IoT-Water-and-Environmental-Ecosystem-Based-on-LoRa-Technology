@@ -1,0 +1,327 @@
+#include "LoRaWan_APP.h"
+#include "HT_SSD1306Wire.h"
+#include <Wire.h>
+#include <Adafruit_BMP280.h>
+#include <Arduino.h>
+
+// ================= HELTEC LICENSE =================
+uint32_t license[4] = { 0xB364BF41, 0xFFE1333A, 0xD941CAB2, 0x22758583 };
+
+// ==================== PIN CONFIGURATION ====================
+#define SDA_OLED 17
+#define SCL_OLED 18
+#define RST_OLED 21
+#define Vext     36 
+
+#define SDA_BMP   41
+#define SCL_BMP   42
+
+#define TDS_PIN   3
+#define UV_PIN    2
+
+#define BUZZER_PIN 4
+#define LED_GREEN  1
+#define LED_YELLOW 5
+#define LED_RED    6
+#define PRG_BUTTON 0
+
+// ==================== OBJECTS & DATA ====================
+SSD1306Wire oled(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED);
+Adafruit_BMP280 bmp(&Wire1);
+
+struct SensorData {
+  float temp;
+  float pressure;
+  float altitude;
+  float tdsPPM; 
+  float uvV;
+  bool valid;
+};
+SensorData sensorData = {0, 0, 0, 0, 0, false};
+
+// ==================== LORAWAN CONFIG ====================
+bool isTxConfirmed = false;
+uint8_t confirmedNbTrials = 4;
+bool overTheAirActivation = true;
+DeviceClass_t loraWanClass = CLASS_A;
+bool loraWanAdr = true;
+
+// TTN Credentials
+uint8_t devEui[] = { 0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x07, 0x4E, 0x31 };
+uint8_t appEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+uint8_t appKey[] = { 0xBD, 0x54, 0x2E, 0xED, 0xEA, 0x45, 0xAC, 0xAE, 0xC6, 0x16, 0xBA, 0x68, 0xCF, 0xAD, 0x20, 0x3D };
+uint8_t nwkSKey[16], appSKey[16];
+uint32_t devAddr = 0x00000000;
+
+// Europe EU868 Mask for Dragino LPS8
+uint16_t userChannelsMask[6] = {0x00FF, 0, 0, 0, 0, 0};
+LoRaMacRegion_t loraWanRegion = ACTIVE_REGION;
+
+uint32_t appTxDutyCycle = 60000; 
+uint8_t appPort = 1; 
+static uint32_t counter = 0;
+unsigned long lastSendTime = 0;
+
+// Spreading Factor Array
+const uint32_t sfDutyCycle[] = { 300000, 148000, 74000, 40000, 22000, 12000 };
+uint8_t currentSF = 5; // DR5 = SF7
+const uint8_t sfRange[] = {0, 1, 2, 3, 4, 5};
+const int sfCount = 6;
+
+// =================== TIMERS & DISPLAY MANAGEMENT ==================
+uint8_t currentScreen = 0; 
+unsigned long lastScreenSwitch = 0;
+const unsigned long screenSwitchInterval = 4000; 
+unsigned long lastDisplayUpdate = 0;
+
+bool displaySF = false;
+unsigned long sfDisplayStart = 0;
+unsigned long lastButtonPress = 0;
+bool buttonPressed = false;
+
+unsigned long lastRealTimeCheck = 0; 
+
+// ==================== HELPERS ====================
+static void putU16LE(uint8_t* b, int i, uint16_t v) {
+  b[i] = v & 0xFF;
+  b[i + 1] = (v >> 8) & 0xFF;
+}
+static void putI16LE(uint8_t* b, int i, int16_t v) {
+  putU16LE(b, i, (uint16_t)v);
+}
+
+// ==================== DISPLAY FUNCTIONS ====================
+void showDisplay(String line1, String line2 = "", String line3 = "", String line4 = "") {
+  oled.clear();
+  oled.setTextAlignment(TEXT_ALIGN_LEFT);
+  oled.setFont(ArialMT_Plain_10);
+  oled.drawString(0, 0, line1);
+  if (line2.length()) oled.drawString(0, 15, line2);
+  if (line3.length()) oled.drawString(0, 30, line3);
+  if (line4.length()) oled.drawString(0, 45, line4);
+  oled.display();
+}
+
+void displaySensorScreen1() {
+  oled.clear();
+  oled.setFont(ArialMT_Plain_10);
+  oled.drawString(0, 0, "Temp: " + String(sensorData.temp, 1) + " C");
+  oled.drawString(0, 15, "Pres: " + String(sensorData.pressure, 1) + " hPa");
+  oled.drawString(0, 30, "Alt: " + String(sensorData.altitude, 1) + " m"); 
+  oled.drawString(0, 45, "Screen 1");
+  oled.display();
+}
+
+void displaySensorScreen2() {
+  oled.clear();
+  oled.setFont(ArialMT_Plain_10);
+  oled.drawString(0, 0, "TDS: " + String(sensorData.tdsPPM, 0) + " PPM"); 
+  oled.drawString(0, 15, "UV: " + String(sensorData.uvV, 2) + " V");
+  oled.drawString(0, 45, "Screen 2");
+  oled.display();
+}
+
+void updateCountdownDisplay() {
+  if (displaySF) return;
+  unsigned long timeElapsed = millis() - lastSendTime;
+  unsigned long timeRemaining = (timeElapsed < appTxDutyCycle) ? (appTxDutyCycle - timeElapsed)
+  
+  oled.clear();
+  oled.setFont(ArialMT_Plain_10);
+  oled.drawString(0, 0, "Next TX in:");
+  oled.drawString(0, 15, "SF: SF" + String(12 - currentSF));
+  
+  oled.setFont(ArialMT_Plain_24);
+  oled.drawString(40, 35, String(timeRemaining) + "s");
+  oled.display();
+}
+
+void cycleSpreadingFactor() {
+  currentSF = (currentSF + 1) % sfCount;
+  LoRaWAN.setDefaultDR(currentSF);
+  appTxDutyCycle = sfDutyCycle[currentSF];
+  
+  oled.clear();
+  oled.setFont(ArialMT_Plain_24);
+  oled.drawString(35, 20, "SF" + String(12 - currentSF));
+  oled.setFont(ArialMT_Plain_10);
+  oled.drawString(20, 50, String(appTxDutyCycle/1000) + "s interval");
+  oled.display();
+  
+  displaySF = true;
+  sfDisplayStart = millis();
+}
+
+// ==================== SENSOR & TX LOGIC ====================
+void updateRealTimeSensors() {
+  float rawVoltage = analogRead(TDS_PIN) * 3.3f / 4095.0f;
+  sensorData.temp = bmp.readTemperature();
+  
+  // Temperature Compensation Formula
+  float compensationCoefficient = 1.0 + 0.02 * (sensorData.temp - 25.0);
+  float compensationVoltage = rawVoltage / compensationCoefficient;
+  
+  // Conversion to PPM (Standard gravity-based constant for TDS sensors)
+  sensorData.tdsPPM = (133.42 * pow(compensationVoltage, 3) - 255.86 * pow(compensationVoltage, 2) + 857.39 * compensationVoltage) * 0.5;
+
+  sensorData.uvV = analogRead(UV_PIN) * 3.3f / 4095.0f;
+  sensorData.pressure = bmp.readPressure() / 100.0f;
+  sensorData.altitude = bmp.readAltitude(1013.25f); 
+  sensorData.valid = true;
+
+  // Real-Time Traffic Light Logic (Updated for PPM thresholds)
+  // Usually: < 300 PPM is Excellent, 300-600 is Good, > 600 is Poor
+  if (sensorData.tdsPPM <= 300) {
+    digitalWrite(LED_GREEN, HIGH); 
+    digitalWrite(LED_YELLOW, LOW); 
+    digitalWrite(LED_RED, LOW);
+  } else if (sensorData.tdsPPM <= 600) {
+    digitalWrite(LED_GREEN, LOW); 
+    digitalWrite(LED_YELLOW, HIGH); 
+    digitalWrite(LED_RED, LOW);
+  } else {
+    digitalWrite(LED_GREEN, LOW); 
+    digitalWrite(LED_YELLOW, LOW);
+    digitalWrite(LED_RED, HIGH);
+    digitalWrite(BUZZER_PIN, HIGH); 
+    delay(100); 
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+}
+
+static void prepareTxFrame(uint8_t port) {
+  counter++;
+  updateRealTimeSensors(); 
+
+  uint16_t t = (uint16_t)(sensorData.temp * 100);
+  uint16_t p = (uint16_t)(sensorData.pressure * 10);
+  uint16_t tds = (uint16_t)(sensorData.tdsPPM); // Send PPM as a whole number
+  uint16_t u = (uint16_t)(sensorData.uvV * 100);
+  int16_t a = (int16_t)(sensorData.altitude * 10);
+
+  appDataSize = 10;
+  putU16LE(appData, 0, tds); 
+  putU16LE(appData, 2, u);
+  putI16LE(appData, 4, t);
+  putU16LE(appData, 6, p);
+  putI16LE(appData, 8, a);
+}
+
+// ==================== SETUP ====================
+void setup() {
+  Serial.begin(115200);
+  
+  pinMode(Vext, OUTPUT); 
+  digitalWrite(Vext, LOW); 
+  delay(50);
+  pinMode(PRG_BUTTON, INPUT_PULLUP);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT); 
+  pinMode(LED_YELLOW, OUTPUT); 
+  pinMode(LED_RED, OUTPUT);
+
+  oled.init(); oled.flipScreenVertically();
+  showDisplay("Initializing...");
+
+  Wire1.begin(SDA_BMP, SCL_BMP);
+  if (!bmp.begin(0x76)) { Serial.println("BMP280 Error!"); }
+
+  Mcu.setlicense(license, HELTEC_BOARD);
+  Mcu.begin(HELTEC_BOARD, SLOW_CLK_TPYE);
+  
+  LoRaWAN.init(loraWanClass, loraWanRegion);
+  LoRaWAN.setDefaultDR(currentSF);
+  appTxDutyCycle = sfDutyCycle[currentSF];
+  
+  showDisplay("Joining TTN...", "SF: SF" + String(12 - currentSF));
+  LoRaWAN.join();
+}
+
+// ==================== MAIN LOOP ====================
+void loop() {
+  if (millis() - lastRealTimeCheck > 2000) {
+    updateRealTimeSensors();
+    lastRealTimeCheck = millis();
+  }
+
+  if (digitalRead(PRG_BUTTON) == LOW && !buttonPressed) {
+    if (millis() - lastButtonPress > 300) {
+      cycleSpreadingFactor();
+      lastButtonPress = millis();
+      buttonPressed = true;
+    }
+  } else if (digitalRead(PRG_BUTTON) == HIGH) {
+    buttonPressed = false;
+  }
+  
+  if (displaySF && (millis() - sfDisplayStart >= 2000)) {
+    displaySF = false;
+    updateCountdownDisplay();
+  }
+  
+  if (!displaySF && (millis() - lastScreenSwitch >= screenSwitchInterval)) {
+    currentScreen = (currentScreen + 1) % 3;
+    lastScreenSwitch = millis();
+    
+    if (currentScreen == 1) displaySensorScreen1();
+    else if (currentScreen == 2) displaySensorScreen2();
+    else updateCountdownDisplay();
+  }
+  
+  if (!displaySF && currentScreen == 0 && (millis() - lastDisplayUpdate >= 1000)) {
+    updateCountdownDisplay();
+    lastDisplayUpdate = millis();
+  }
+  
+  if (millis() - lastSendTime >= appTxDutyCycle) {
+    prepareTxFrame(appPort);
+    if (!displaySF) showDisplay("Sending Data...", "UP: " + String(counter));
+    
+    LoRaWAN.send();
+    lastSendTime = millis();
+    lastDisplayUpdate = millis();
+  }
+  
+    LoRaWAN.sleep(loraWanClass); 
+}
+
+// ==================== CALLBACKS ====================
+void onJoinSucceeded() {
+  showDisplay("LoRaWAN OK","Joined TTN...", "SF: SF" + String(12 - currentSF));
+  lastSendTime = millis();
+  currentScreen = 0;
+}
+void onJoinFailed() { showDisplay("Join Failed!", "Retrying..."); }
+void onTxDone() { if (!displaySF) updateCountdownDisplay(); }
+void onTxConfirmed() { }
+void onTxTimeout() { }
+void downLinkDataHandle(McpsIndication_t *mcpsIndication) {
+  // Check if we received the "0x01" command from the Dashboard
+  if (mcpsIndication->BufferSize > 0 && mcpsIndication->Buffer[0] == 0x01) {
+    
+    // 1. Visual Alert on OLED
+    oled.clear();
+    oled.setFont(ArialMT_Plain_16);
+    oled.setTextAlignment(TEXT_ALIGN_CENTER);
+    oled.drawString(64, 10, "REMOTE ALARM");
+    oled.setFont(ArialMT_Plain_10);
+    oled.drawString(64, 35, "Command Received");
+    oled.display();
+
+    // 2. Turn on the Red Light (and turn off others for clarity)
+    digitalWrite(LED_GREEN, LOW);
+    digitalWrite(LED_YELLOW, LOW);
+    digitalWrite(LED_RED, HIGH);
+
+    // 3. Trigger the Buzzer sequence
+    for (int i = 0; i < 10; i++) { 
+      digitalWrite(BUZZER_PIN, HIGH); 
+      delay(150); 
+      digitalWrite(BUZZER_PIN, LOW); 
+      delay(150); 
+    }
+
+    // 4. Reset the screen switch timer so the message stays visible for a moment
+    lastScreenSwitch = millis(); 
+  }
+}

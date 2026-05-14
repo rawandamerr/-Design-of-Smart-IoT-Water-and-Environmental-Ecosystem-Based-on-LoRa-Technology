@@ -1,0 +1,137 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <Wire.h>
+#include <Adafruit_BMP280.h>
+#include <SSD1306Wire.h>
+ 
+// ------------------- OLED (built-in) -------------------
+#define SDA_OLED 17
+#define SCL_OLED 18
+#define RST_OLED 21
+#define VEXT_PIN 36   
+ 
+SSD1306Wire myDisplay(0x3c, SDA_OLED, SCL_OLED, GEOMETRY_128_64);
+ 
+// ------------------- BMP280 (I2C 1) -------------------
+#define SDA_BMP 41
+#define SCL_BMP 42
+Adafruit_BMP280 bmp(&Wire1);
+ 
+// ------------------- ANALOG SENSORS -------------------
+#define TDS_PIN 3
+#define UV_PIN  2
+ 
+// ------------------- WIFI + THINGSPEAK -------------------
+const char* WIFI_SSID = "HUAWEI-JHx6";
+const char* WIFI_PASS = "s7nKfK6x";
+String THINGSPEAK_API = "S8BCJ1HNAR28MBD7";
+String THINGSPEAK_URL = "http://api.thingspeak.com/update";
+ 
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+ 
+  // Power ON OLED
+  pinMode(VEXT_PIN, OUTPUT);
+  digitalWrite(VEXT_PIN, LOW);
+  delay(200);
+ 
+  // OLED reset pulse
+  pinMode(RST_OLED, OUTPUT);
+  digitalWrite(RST_OLED, LOW);
+  delay(50);
+  digitalWrite(RST_OLED, HIGH);
+  delay(50);
+ 
+  // OLED I2C
+  Wire.begin(SDA_OLED, SCL_OLED);
+  Wire.setClock(100000);
+ 
+  myDisplay.init();
+  myDisplay.flipScreenVertically();
+  myDisplay.setFont(ArialMT_Plain_10);
+  myDisplay.clear();
+  myDisplay.drawString(0, 0, "Booting...");
+  myDisplay.display();
+ 
+  // WiFi
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+ 
+  unsigned long startAttempt = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 30000) {
+    delay(500);
+    Serial.print(".");
+  }
+ 
+  myDisplay.clear();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected!");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+    myDisplay.drawString(0, 0, "WiFi OK");
+    myDisplay.drawString(0, 12, WiFi.localIP().toString());
+  } else {
+    Serial.println("\nWiFi failed!");
+    myDisplay.drawString(0, 0, "WiFi FAIL");
+    myDisplay.drawString(0, 12, String("Status: ") + WiFi.status());
+  }
+  myDisplay.display();
+ 
+
+  // BMP280 on Wire1
+  Wire1.begin(SDA_BMP, SCL_BMP);
+ 
+  if (!bmp.begin(0x76)) { // try 0x77 if needed
+    myDisplay.clear();
+    myDisplay.drawString(0, 0, "BMP280 ERROR!");
+    myDisplay.display();
+    Serial.println("BMP280 not found!");
+    while (1) delay(100);
+  }
+}
+ 
+void sendToThingSpeak(float tds, float uv, float temp, float pres, float alt) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected, skip ThingSpeak");
+    return;
+  }
+ 
+  HTTPClient http;
+  String url = THINGSPEAK_URL +
+               "?api_key=" + THINGSPEAK_API +
+               "&field1=" + String(tds, 3) +
+               "&field2=" + String(uv, 3) +
+               "&field3=" + String(temp, 2) +
+               "&field4=" + String(pres, 2) +
+               "&field5=" + String(alt, 2);
+ 
+  http.begin(url);
+  int httpCode = http.GET();
+  Serial.print("ThingSpeak response: ");
+  Serial.println(httpCode);
+  http.end();
+}
+ 
+void loop() {
+  float tdsValue = analogRead(TDS_PIN) * 3.3 / 4095.0;
+  float uvValue  = analogRead(UV_PIN)  * 3.3 / 4095.0;
+ 
+  float temp = bmp.readTemperature();
+  float pres = bmp.readPressure() / 100.0;
+  float alt  = bmp.readAltitude(1013.25);
+ 
+  Serial.printf("TDS: %.2f V | UV: %.2f V | Temp: %.2f C | Pres: %.2f hPa | Alt: %.2f m\n",
+                tdsValue, uvValue, temp, pres, alt);
+ 
+  myDisplay.clear();
+  myDisplay.drawString(0, 0,  "TDS:  " + String(tdsValue, 2));
+  myDisplay.drawString(0, 12, "UV:   " + String(uvValue, 2));
+  myDisplay.drawString(0, 24, "Temp: " + String(temp, 1) + " C");
+  myDisplay.drawString(0, 36, "Pres: " + String(pres, 1) + " hPa");
+  myDisplay.drawString(0, 48, "Alt:  " + String(alt, 1) + " m");
+  myDisplay.display();
+ 
+  sendToThingSpeak(tdsValue, uvValue, temp, pres, alt);
+  delay(15000);   }

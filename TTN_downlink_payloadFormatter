@@ -1,0 +1,28 @@
+function encodeDownlink(input) {
+  var bytes = [];
+  
+  // If you send JSON: { "command": 1 }
+  if (input.data.command !== undefined) {
+    bytes[0] = input.data.command;
+  }
+  
+  // If you send a value: { "value": 500 }
+  if (input.data.value !== undefined) {
+    bytes[1] = input.data.value & 0xFF;         // Low byte
+    bytes[2] = (input.data.value >> 8) & 0xFF;  // High byte
+  }
+
+  return {
+    bytes: bytes,
+    fPort: 1,
+  };
+}
+
+// THIS IS THE PART THAT REMOVES THE RED ERROR
+function decodeDownlink(input) {
+  return {
+    data: {
+      last_command_sent: input.bytes[0]
+    }
+  };
+}
